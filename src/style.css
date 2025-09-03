@@ -1,0 +1,105 @@
+body {
+  font-family: "Poppins", sans-serif;
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(to bottom right, #a8d8ff, #d0eaff);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.logout-btn {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  padding: 10px;
+}
+
+.affirmations {
+  margin: 20px;
+  padding: 15px;
+  background: #8e6dfd;
+  color: #fff;
+  border-radius: 16px;
+  text-align: center;
+  font-size: 1.1rem;
+}
+
+.login-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 80vh;
+  width: 100%;
+}
+
+.login-card {
+  background: #8e6dfd;
+  color: #fff;
+  padding: 30px;
+  border-radius: 20px;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
+  max-width: 400px;
+  width: 90%;
+  text-align: center;
+}
+
+.login-card input,
+.upload-form input {
+  width: 100%;
+  padding: 10px;
+  margin: 8px 0;
+  border-radius: 8px;
+  border: none;
+}
+
+button {
+  background: #ff85c1;
+  color: white;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+button:hover {
+  background: #ff5ea3;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  width: 100%;
+  padding: 20px;
+}
+
+.video-tile {
+  background: #8e6dfd;
+  color: white;
+  border-radius: 16px;
+  padding: 15px;
+  text-align: center;
+}
+
+.video-tile video {
+  width: 100%;
+  border-radius: 12px;
+}
+
+.comment-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 6px 10px;
+  margin: 6px 0;
+  border-radius: 8px;
+}
+
+.comment-actions button {
+  margin-left: 6px;
+  font-size: 0.9rem;
+  padding: 5px 8px;
+}
