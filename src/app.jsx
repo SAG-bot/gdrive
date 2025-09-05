@@ -29,6 +29,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [refreshFlag, setRefreshFlag] = useState(false); // triggers video refetch
 
+  // Get current session and listen for auth changes
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -46,4 +47,29 @@ export default function App() {
     setSession(null);
   };
 
-  const t
+  const triggerRefresh = () => setRefreshFlag((prev) => !prev);
+
+  return (
+    <div>
+      {!session ? (
+        <Login onLogin={setSession} />
+      ) : (
+        <>
+          <div className="header">
+            <h1>💜 Our Private Vlog 💙</h1>
+            <button onClick={handleLogout} className="logout-btn">
+              🚪 Logout
+            </button>
+          </div>
+
+          <div className="affirmations">
+            {affirmations[Math.floor(Math.random() * affirmations.length)]}
+          </div>
+
+          <VideoUpload session={session} onUpload={triggerRefresh} />
+          <VideoList session={session} refreshFlag={refreshFlag} />
+        </>
+      )}
+    </div>
+  );
+}
