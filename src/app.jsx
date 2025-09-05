@@ -66,8 +66,8 @@ export default function App() {
             {affirmations[Math.floor(Math.random() * affirmations.length)]}
           </div>
 
-          <VideoUpload session={session} onUpload={triggerRefresh} />
-          <VideoList session={session} refreshFlag={refreshFlag} />
+          <VideoUpload user={session.user} onUpload={triggerRefresh} />
+          <VideoList user={session.user} refreshFlag={refreshFlag} />
         </>
       )}
     </div>
