@@ -1,20 +1,25 @@
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
+import multiparty from "multiparty";
+import fs from "fs";
 
 const supabase = createClient(
-  process.env.VITE_SUPABASE_URL,
-  process.env.VITE_SUPABASE_ANON_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
 );
 
-const drive = google.drive({
-  version: "v3",
-  auth: new google.auth.JWT(
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    null,
-    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-    ["https://www.googleapis.com/auth/drive.file"]
-  ),
+// Use OAuth2 refresh token flow (better than Service Account for Drive)
+const auth = new google.auth.OAuth2(
+  process.env.CLIENT_ID,
+  process.env.CLIENT_SECRET,
+  "https://developers.google.com/oauthplayground" // redirect URI from setup
+);
+
+auth.setCredentials({
+  refresh_token: process.env.REFRESH_TOKEN,
 });
+
+const drive = google.drive({ version: "v3", auth });
 
 export const handler = async (event) => {
   if (event.httpMethod !== "POST") {
@@ -25,29 +30,35 @@ export const handler = async (event) => {
   }
 
   try {
-    const { title, user_id, fileName, fileType, fileData } = JSON.parse(
-      event.body
-    );
+    // Parse multipart form data
+    const form = new multiparty.Form();
+    const data = await new Promise((resolve, reject) => {
+      form.parse(event, (err, fields, files) => {
+        if (err) reject(err);
+        else resolve({ fields, files });
+      });
+    });
 
-    if (!fileName || !fileData) {
+    const title = data.fields.title?.[0] || "Untitled";
+    const user_id = data.fields.user_id?.[0] || "anonymous";
+    const file = data.files.file?.[0];
+
+    if (!file) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: "Missing file data or name" }),
+        body: JSON.stringify({ error: "No file uploaded" }),
       };
     }
 
-    // Convert base64 -> Buffer
-    const buffer = Buffer.from(fileData, "base64");
-
-    // Upload to Google Drive
+    // Upload file to Google Drive
     const fileRes = await drive.files.create({
       requestBody: {
-        name: fileName,
-        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID], // make sure you created a folder & set ID
+        name: file.originalFilename,
+        parents: [process.env.DRIVE_FOLDER_ID], // folder you created
       },
       media: {
-        mimeType: fileType || "video/mp4",
-        body: bufferToStream(buffer),
+        mimeType: file.headers["content-type"] || "video/mp4",
+        body: fs.createReadStream(file.path),
       },
       fields: "id",
     });
@@ -60,10 +71,10 @@ export const handler = async (event) => {
       requestBody: { role: "reader", type: "anyone" },
     });
 
-    // Public video URL
+    // Direct link for embedding/streaming
     const videoUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
 
-    // Insert into Supabase
+    // Save metadata in Supabase
     const { error: dbError } = await supabase.from("videos").insert([
       {
         title,
@@ -86,12 +97,3 @@ export const handler = async (event) => {
     };
   }
 };
-
-// helper to turn Buffer into ReadableStream
-function bufferToStream(buffer) {
-  const { Readable } = require("stream");
-  const stream = new Readable();
-  stream.push(buffer);
-  stream.push(null);
-  return stream;
-}
