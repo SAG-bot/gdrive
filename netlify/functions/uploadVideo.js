@@ -1,66 +1,95 @@
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
 
-// Supabase setup
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
   process.env.VITE_SUPABASE_ANON_KEY
 );
 
 export async function handler(event) {
+  if (event.httpMethod !== "POST") {
+    return {
+      statusCode: 405,
+      body: JSON.stringify({ error: "Method not allowed" }),
+    };
+  }
+
   try {
-    if (event.httpMethod !== "POST") {
-      return { statusCode: 405, body: "Method Not Allowed" };
+    const { title, user_id, fileData, fileName } = JSON.parse(event.body);
+
+    if (!title || !user_id || !fileData || !fileName) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: "Missing required fields" }),
+      };
     }
 
-    const body = JSON.parse(event.body);
-    const { fileName, fileContent, title, user_id } = body;
-
-    if (!fileName || !fileContent) {
-      return { statusCode: 400, body: "Missing file data" };
-    }
-
-    // Google Auth
-    const auth = new google.auth.JWT({
-      email: process.env.GDRIVE_CLIENT_EMAIL,
-      key: process.env.GDRIVE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-      scopes: ["https://www.googleapis.com/auth/drive.file"],
-    });
+    // ✅ Google Drive auth
+    const auth = new google.auth.JWT(
+      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      null,
+      process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+      ["https://www.googleapis.com/auth/drive.file"]
+    );
 
     const drive = google.drive({ version: "v3", auth });
 
-    // Upload file to Drive
-    const fileRes = await drive.files.create({
-      requestBody: { name: fileName, parents: [process.env.GDRIVE_FOLDER_ID] },
+    // ✅ Convert base64 string back into a buffer
+    const buffer = Buffer.from(fileData, "base64");
+
+    // ✅ Upload to Google Drive
+    const uploadResponse = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID],
+      },
       media: {
         mimeType: "video/mp4",
-        body: Buffer.from(fileContent, "base64"),
+        body: buffer,
+      },
+      fields: "id",
+    });
+
+    const fileId = uploadResponse.data.id;
+
+    // ✅ Make file public
+    await drive.permissions.create({
+      fileId,
+      requestBody: {
+        role: "reader",
+        type: "anyone",
       },
     });
 
-    const fileId = fileRes.data.id;
+    const publicUrl = `https://drive.google.com/uc?id=${fileId}`;
 
-    // Make file public
-    await drive.permissions.create({
-      fileId,
-      requestBody: { role: "reader", type: "anyone" },
-    });
-
-    const videoUrl = `https://drive.google.com/uc?id=${fileId}&export=download`;
-
-    // Insert into Supabase
-    const { error } = await supabase.from("videos").insert([
-      { title, video_url: videoUrl, user_id },
+    // ✅ Save metadata in Supabase
+    const { error: dbError } = await supabase.from("videos").insert([
+      {
+        title,
+        video_url: publicUrl,
+        user_id,
+      },
     ]);
 
-    if (error) throw error;
+    if (dbError) throw dbError;
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ message: "Upload successful", videoUrl }),
+      body: JSON.stringify({
+        message: "Video uploaded successfully 🎉",
+        videoUrl: publicUrl,
+      }),
     };
-  } catch (err) {
-    console.error("Upload error:", err);
-    return { statusCode: 500, body: "Internal Server Error" };
+  } catch (error) {
+    console.error("Upload error:", error);
+
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: "Upload failed",
+        details: error.message,
+      }),
+    };
   }
 }
