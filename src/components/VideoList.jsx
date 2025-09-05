@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-export default function VideoList({ session }) {
+export default function VideoList({ session, refreshFlag }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [commentInputs, setCommentInputs] = useState({}); // per-video comment
+  const [commentInputs, setCommentInputs] = useState({});
 
   useEffect(() => {
     fetchVideos();
+  }, [refreshFlag]); // <-- refetch when refreshFlag changes
 
+  useEffect(() => {
+    // Optional real-time subscription
     const channel = supabase
       .channel("videos-channel")
       .on(
@@ -53,8 +56,7 @@ export default function VideoList({ session }) {
       { video_id: videoId, user_id: session.user.id, content },
     ]);
 
-    if (error) console.error("Comment error:", error.message);
-    else {
+    if (!error) {
       setCommentInputs((prev) => ({ ...prev, [videoId]: "" }));
       fetchVideos();
     }
@@ -67,13 +69,11 @@ export default function VideoList({ session }) {
       .eq("id", commentId)
       .eq("user_id", session.user.id);
 
-    if (error) console.error("Delete comment error:", error.message);
-    else fetchVideos();
+    if (!error) fetchVideos();
   };
 
   const handleDeleteVideo = async (videoId) => {
     try {
-      // Call Netlify function to delete from Drive + Supabase
       const res = await fetch("/.netlify/functions/deleteVideo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -104,7 +104,6 @@ export default function VideoList({ session }) {
             )}
           </div>
 
-          {/* Comments */}
           <div className="comments">
             <h4>Comments</h4>
             {video.comments && video.comments.length > 0 ? (
@@ -112,7 +111,10 @@ export default function VideoList({ session }) {
                 <div key={c.id} className="comment">
                   <span>{c.content}</span>
                   {c.user_id === session.user.id && (
-                    <button className="delete-btn" onClick={() => handleDeleteComment(c.id)}>
+                    <button
+                      className="delete-btn"
+                      onClick={() => handleDeleteComment(c.id)}
+                    >
                       ✖
                     </button>
                   )}
