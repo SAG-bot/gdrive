@@ -1,64 +1,51 @@
-import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
-import multiparty from "multiparty";
-import fs from "fs";
+import { google } from "googleapis";
+import { Readable } from "stream";
 
+// Initialize Supabase client
 const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.VITE_SUPABASE_URL,
+  process.env.VITE_SUPABASE_ANON_KEY
 );
 
-// Use OAuth2 refresh token flow (better than Service Account for Drive)
-const auth = new google.auth.OAuth2(
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET,
-  "https://developers.google.com/oauthplayground" // redirect URI from setup
-);
-
-auth.setCredentials({
-  refresh_token: process.env.REFRESH_TOKEN,
+// Initialize Google Drive client with Service Account
+const drive = google.drive({
+  version: "v3",
+  auth: new google.auth.JWT(
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    null,
+    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    ["https://www.googleapis.com/auth/drive.file"]
+  ),
 });
-
-const drive = google.drive({ version: "v3", auth });
 
 export const handler = async (event) => {
   if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      body: JSON.stringify({ error: "Method not allowed" }),
-    };
+    return { statusCode: 405, body: JSON.stringify({ error: "Method not allowed" }) };
   }
 
   try {
-    // Parse multipart form data
-    const form = new multiparty.Form();
-    const data = await new Promise((resolve, reject) => {
-      form.parse(event, (err, fields, files) => {
-        if (err) reject(err);
-        else resolve({ fields, files });
-      });
-    });
+    const { title, user_id, fileName, fileType, fileData } = JSON.parse(event.body);
 
-    const title = data.fields.title?.[0] || "Untitled";
-    const user_id = data.fields.user_id?.[0] || "anonymous";
-    const file = data.files.file?.[0];
-
-    if (!file) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: "No file uploaded" }),
-      };
+    if (!fileName || !fileData || !user_id || !title) {
+      return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields" }) };
     }
 
-    // Upload file to Google Drive
+    // Convert base64 to stream
+    const buffer = Buffer.from(fileData, "base64");
+    const stream = new Readable();
+    stream.push(buffer);
+    stream.push(null);
+
+    // Upload to Google Drive
     const fileRes = await drive.files.create({
       requestBody: {
-        name: file.originalFilename,
-        parents: [process.env.DRIVE_FOLDER_ID], // folder you created
+        name: fileName,
+        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID],
       },
       media: {
-        mimeType: file.headers["content-type"] || "video/mp4",
-        body: fs.createReadStream(file.path),
+        mimeType: fileType || "video/mp4",
+        body: stream,
       },
       fields: "id",
     });
@@ -71,29 +58,21 @@ export const handler = async (event) => {
       requestBody: { role: "reader", type: "anyone" },
     });
 
-    // Direct link for embedding/streaming
     const videoUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
 
-    // Save metadata in Supabase
+    // Insert video record into Supabase
     const { error: dbError } = await supabase.from("videos").insert([
-      {
-        title,
-        user_id,
-        video_url: videoUrl,
-      },
+      { title, user_id, video_url: videoUrl },
     ]);
 
     if (dbError) throw dbError;
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ message: "Video uploaded", videoUrl }),
+      body: JSON.stringify({ message: "Video uploaded successfully", videoUrl }),
     };
   } catch (err) {
-    console.error("Upload error:", err);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: err.message }),
-    };
+    console.error("UploadVideo function error:", err);
+    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
