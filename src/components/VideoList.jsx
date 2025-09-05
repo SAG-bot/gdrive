@@ -4,12 +4,11 @@ import { supabase } from "../supabaseClient";
 export default function VideoList({ session }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [newComment, setNewComment] = useState("");
+  const [commentInputs, setCommentInputs] = useState({}); // per-video comment
 
   useEffect(() => {
     fetchVideos();
 
-    // Subscribe for real-time refresh on inserts
     const channel = supabase
       .channel("videos-channel")
       .on(
@@ -30,43 +29,33 @@ export default function VideoList({ session }) {
     setLoading(true);
     const { data, error } = await supabase
       .from("videos")
-      .select("id, title, video_url, user_id, created_at, likes, comments");
+      .select(`
+        id,
+        title,
+        video_url,
+        user_id,
+        created_at,
+        comments(id, content, user_id)
+      `)
+      .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("Error fetching videos:", error.message);
-    } else {
-      setVideos(data || []);
-    }
+    if (error) console.error("Error fetching videos:", error.message);
+    else setVideos(data || []);
+
     setLoading(false);
   };
 
-  const handleLike = async (videoId) => {
-    const { data, error } = await supabase
-      .from("videos")
-      .update({ likes: supabase.rpc("increment_like", { row_id: videoId }) })
-      .eq("id", videoId)
-      .select();
-
-    if (error) {
-      console.error("Like error:", error.message);
-    } else {
-      fetchVideos();
-    }
-  };
-
   const handleAddComment = async (videoId) => {
-    if (!newComment.trim()) return;
+    const content = commentInputs[videoId]?.trim();
+    if (!content) return;
 
-    const { data, error } = await supabase
-      .from("comments")
-      .insert([
-        { video_id: videoId, user_id: session.user.id, content: newComment },
-      ]);
+    const { error } = await supabase.from("comments").insert([
+      { video_id: videoId, user_id: session.user.id, content },
+    ]);
 
-    if (error) {
-      console.error("Comment error:", error.message);
-    } else {
-      setNewComment("");
+    if (error) console.error("Comment error:", error.message);
+    else {
+      setCommentInputs((prev) => ({ ...prev, [videoId]: "" }));
       fetchVideos();
     }
   };
@@ -78,24 +67,24 @@ export default function VideoList({ session }) {
       .eq("id", commentId)
       .eq("user_id", session.user.id);
 
-    if (error) {
-      console.error("Delete comment error:", error.message);
-    } else {
-      fetchVideos();
-    }
+    if (error) console.error("Delete comment error:", error.message);
+    else fetchVideos();
   };
 
   const handleDeleteVideo = async (videoId) => {
-    const { error } = await supabase
-      .from("videos")
-      .delete()
-      .eq("id", videoId)
-      .eq("user_id", session.user.id);
-
-    if (error) {
-      console.error("Delete video error:", error.message);
-    } else {
+    try {
+      // Call Netlify function to delete from Drive + Supabase
+      const res = await fetch("/.netlify/functions/deleteVideo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ video_id: videoId, user_id: session.user.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Delete failed");
       fetchVideos();
+    } catch (err) {
+      console.error("Delete video error:", err.message);
+      alert("Error deleting video: " + err.message);
     }
   };
 
@@ -106,21 +95,10 @@ export default function VideoList({ session }) {
       {videos.map((video) => (
         <div className="video-tile" key={video.id}>
           <h3>{video.title}</h3>
-          <video
-            src={video.video_url}
-            controls
-            playsInline
-            className="video-player"
-          />
+          <video src={video.video_url} controls playsInline className="video-player" />
           <div className="video-actions">
-            <button className="like-btn" onClick={() => handleLike(video.id)}>
-              ❤️ {video.likes || 0}
-            </button>
             {session.user.id === video.user_id && (
-              <button
-                className="delete-btn"
-                onClick={() => handleDeleteVideo(video.id)}
-              >
+              <button className="delete-btn" onClick={() => handleDeleteVideo(video.id)}>
                 🗑 Delete
               </button>
             )}
@@ -134,10 +112,7 @@ export default function VideoList({ session }) {
                 <div key={c.id} className="comment">
                   <span>{c.content}</span>
                   {c.user_id === session.user.id && (
-                    <button
-                      className="delete-btn"
-                      onClick={() => handleDeleteComment(c.id)}
-                    >
+                    <button className="delete-btn" onClick={() => handleDeleteComment(c.id)}>
                       ✖
                     </button>
                   )}
@@ -155,8 +130,10 @@ export default function VideoList({ session }) {
               <input
                 type="text"
                 placeholder="Write a comment..."
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
+                value={commentInputs[video.id] || ""}
+                onChange={(e) =>
+                  setCommentInputs((prev) => ({ ...prev, [video.id]: e.target.value }))
+                }
               />
               <button type="submit">💬 Post</button>
             </form>
