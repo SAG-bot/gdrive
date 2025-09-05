@@ -6,7 +6,17 @@ const supabase = createClient(
   process.env.VITE_SUPABASE_ANON_KEY
 );
 
-export async function handler(event) {
+const drive = google.drive({
+  version: "v3",
+  auth: new google.auth.JWT(
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    null,
+    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    ["https://www.googleapis.com/auth/drive.file"]
+  ),
+});
+
+export const handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -15,60 +25,50 @@ export async function handler(event) {
   }
 
   try {
-    const { title, user_id, fileData, fileName } = JSON.parse(event.body);
+    const { title, user_id, fileName, fileType, fileData } = JSON.parse(
+      event.body
+    );
 
-    if (!title || !user_id || !fileData || !fileName) {
+    if (!fileName || !fileData) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: "Missing required fields" }),
+        body: JSON.stringify({ error: "Missing file data or name" }),
       };
     }
 
-    // ✅ Google Drive auth
-    const auth = new google.auth.JWT(
-      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      null,
-      process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-      ["https://www.googleapis.com/auth/drive.file"]
-    );
-
-    const drive = google.drive({ version: "v3", auth });
-
-    // ✅ Convert base64 string back into a buffer
+    // Convert base64 -> Buffer
     const buffer = Buffer.from(fileData, "base64");
 
-    // ✅ Upload to Google Drive
-    const uploadResponse = await drive.files.create({
+    // Upload to Google Drive
+    const fileRes = await drive.files.create({
       requestBody: {
         name: fileName,
-        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID],
+        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID], // make sure you created a folder & set ID
       },
       media: {
-        mimeType: "video/mp4",
-        body: buffer,
+        mimeType: fileType || "video/mp4",
+        body: bufferToStream(buffer),
       },
       fields: "id",
     });
 
-    const fileId = uploadResponse.data.id;
+    const fileId = fileRes.data.id;
 
-    // ✅ Make file public
+    // Make file public
     await drive.permissions.create({
       fileId,
-      requestBody: {
-        role: "reader",
-        type: "anyone",
-      },
+      requestBody: { role: "reader", type: "anyone" },
     });
 
-    const publicUrl = `https://drive.google.com/uc?id=${fileId}`;
+    // Public video URL
+    const videoUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
 
-    // ✅ Save metadata in Supabase
+    // Insert into Supabase
     const { error: dbError } = await supabase.from("videos").insert([
       {
         title,
-        video_url: publicUrl,
         user_id,
+        video_url: videoUrl,
       },
     ]);
 
@@ -76,20 +76,22 @@ export async function handler(event) {
 
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        message: "Video uploaded successfully 🎉",
-        videoUrl: publicUrl,
-      }),
+      body: JSON.stringify({ message: "Video uploaded", videoUrl }),
     };
-  } catch (error) {
-    console.error("Upload error:", error);
-
+  } catch (err) {
+    console.error("Upload error:", err);
     return {
       statusCode: 500,
-      body: JSON.stringify({
-        error: "Upload failed",
-        details: error.message,
-      }),
+      body: JSON.stringify({ error: err.message }),
     };
   }
+};
+
+// helper to turn Buffer into ReadableStream
+function bufferToStream(buffer) {
+  const { Readable } = require("stream");
+  const stream = new Readable();
+  stream.push(buffer);
+  stream.push(null);
+  return stream;
 }
