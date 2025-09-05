@@ -5,15 +5,6 @@ export default function VideoUpload({ session, onUpload }) {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
 
-  // Convert file -> base64 string
-  const toBase64 = (file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(",")[1]); // remove "data:video/...;base64,"
-      reader.onerror = (error) => reject(error);
-    });
-
   const handleUpload = async (e) => {
     e.preventDefault();
     if (!file || !title) {
@@ -24,18 +15,15 @@ export default function VideoUpload({ session, onUpload }) {
     setUploading(true);
 
     try {
-      const base64Video = await toBase64(file);
+      // Build multipart/form-data request
+      const formData = new FormData();
+      formData.append("title", title);
+      formData.append("user_id", session?.user?.id || "anonymous");
+      formData.append("file", file);
 
       const response = await fetch("/.netlify/functions/uploadVideo", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          user_id: session?.user?.id || null,
-          fileName: file.name,
-          fileType: file.type,
-          fileData: base64Video,
-        }),
+        body: formData,
       });
 
       const result = await response.json();
@@ -44,14 +32,14 @@ export default function VideoUpload({ session, onUpload }) {
         throw new Error(result.error || "Upload failed");
       }
 
-      alert("Video uploaded successfully!");
+      alert("✅ Video uploaded successfully!");
       setTitle("");
       setFile(null);
 
       if (onUpload) onUpload(); // refresh video list
     } catch (err) {
       console.error("Upload error:", err);
-      alert("Error uploading video: " + err.message);
+      alert("❌ Error uploading video: " + err.message);
     } finally {
       setUploading(false);
     }
